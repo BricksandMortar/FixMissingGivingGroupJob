@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Linq;
 using Quartz;
-using Rock;
 using Rock.Data;
 using Rock.Model;
 using Rock.Web.Cache;
@@ -19,39 +14,32 @@ namespace com.bricksandmortarstudio.FixCombinedGivers
             var rockContext = new RockContext();
 
             var familyGroupType = GroupTypeCache.Read( Rock.SystemGuid.GroupType.GROUPTYPE_FAMILY );
-            var adultRoleGuid = Rock.SystemGuid.GroupRole.GROUPROLE_FAMILY_MEMBER_ADULT.AsGuid();
-
-            //Create KeyPairValues where the FamilyId is the key and the PersonId is the value
-            var familys = new GroupService( rockContext )
-                .Queryable( "Members,Members.Person" )
-                .Where( g => g.GroupTypeId == familyGroupType.Id && g.Members.Any( m => m.Person.GivingGroupId == 0 || m.Person.GivingGroupId == null ) )
-                .SelectMany( g => g.Members.Select( p => new KeyValuePair<int, int>( g.Id, p.Id ) ) );
-
-            int count = 0;
-            var personService = new PersonService( rockContext );
-            foreach ( var family in familys )
+            var familyMembers = new GroupMemberService( rockContext )
+              .Queryable( "Group,Person" )
+              .Where(
+                  g =>
+                      g.Group.GroupType.Id == familyGroupType.Id && g.Person.GivingGroupId == 0 ||
+                      g.Person.GivingGroupId == null );
+            while (familyMembers.Any())
             {
-                var person = personService.Get( family.Value );
-
-                //Only set people who are missing a GivingGroup
-                if ( person.GivingGroupId != null && person.GivingGroupId != 0 )
+                //Chunk to prevent foreach saving thread errors
+                foreach ( var chunk in familyMembers.OrderBy( f => f.Id ).QueryChunksOfSize( 100 ) )
                 {
-                    continue;
-                }
-
-                //Set the GivingGroup as the FamilyId
-                person.GivingGroupId = family.Key;
-                count++;
-                if ( count > 100 )
-                {
+                    foreach ( var familyMember in chunk )
+                    {
+                        familyMember.Person.GivingGroupId = familyMember.GroupId;
+                    }
                     rockContext.SaveChanges();
-                    //Replace the context and service as the objects become bloated
-                    rockContext = new RockContext();
-                    personService = new PersonService( rockContext );
-                    count = 0;
                 }
+                rockContext = new RockContext();
+                familyMembers = new GroupMemberService( rockContext )
+              .Queryable( "Group,Person" )
+              .Where(
+                  g =>
+                      g.Group.GroupType.Id == familyGroupType.Id && g.Person.GivingGroupId == 0 ||
+                      g.Person.GivingGroupId == null );
             }
-            rockContext.SaveChanges();
+           
         }
 
     }
